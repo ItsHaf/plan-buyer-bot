@@ -79,6 +79,7 @@ export interface TabWorker {
   lastRefresh: number;
   refreshCount: number;
   buyButtonDetected: boolean;
+  postDropRefreshCount: number;
 }
 
 export type TabStatus = 

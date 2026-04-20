@@ -234,7 +234,8 @@ export class DropController {
       strategy: this.config.strategy === 'refresh-spam' ? 'refresh-spam' : 'pre-position',
       lastRefresh: 0,
       refreshCount: 0,
-      buyButtonDetected: false
+      buyButtonDetected: false,
+      postDropRefreshCount: 0
     };
 
     this.workers.set(id, worker);
@@ -618,6 +619,50 @@ export class DropController {
   }
 
   /**
+   * A stable target page is the intended product page, not a rate-limit page.
+   * Once a worker reaches this state, we stop mass-refreshing that tab unless
+   * the user explicitly allowed extra target-page refresh attempts.
+   */
+  private isStableTargetPage(url: string): boolean {
+    return this.isOnTargetSite(url) && !url.includes('rate-limit.html');
+  }
+
+  /**
+   * Decide whether this worker should keep refreshing after the drop.
+   *
+   * Rules:
+   * - If the tab already shows a payment screen or enabled buy button, stop refreshing it.
+   * - Every tab gets one mandatory post-drop refresh unless it is already actionable.
+   * - Tabs still stuck on rate-limit/unknown pages should keep refreshing.
+   * - Tabs already cleanly on the target page should stop mass-refreshing.
+   */
+  private async shouldRefreshWorkerAfterDrop(worker: TabWorker): Promise<boolean> {
+    const currentUrl = worker.page.url();
+
+    if (this.isStableTargetPage(currentUrl)) {
+      await this.checkForPayment(worker);
+      if (!this.successFlag && !worker.buyButtonDetected) {
+        await this.checkForBuyButton(worker);
+      }
+
+      if (this.successFlag || worker.buyButtonDetected) {
+        return false;
+      }
+    }
+
+    if (worker.postDropRefreshCount === 0) {
+      console.log(`[Tab ${worker.id}] First post-drop refresh`);
+      return true;
+    }
+
+    if (!this.isStableTargetPage(currentUrl)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Check if buy button is available
    */
   private async checkForBuyButton(worker: TabWorker): Promise<PlanAvailabilityEvent | null> {
@@ -806,15 +851,24 @@ export class DropController {
    * Refresh spam strategy
    */
   private async executeRefreshSpamStrategy(): Promise<void> {
-    console.log('\n🔄 Executing refresh spam strategy...');
+    console.log('\n🔄 Executing post-drop refresh strategy...');
     
     const promises = Array.from(this.workers.values())
       .filter(w => w.status !== 'stopped')
       .map(async (worker) => {
         worker.strategy = 'refresh-spam';
-        worker.buyButtonDetected = false;
         
         while (!this.successFlag && worker.status !== 'stopped') {
+          const shouldRefresh = await this.shouldRefreshWorkerAfterDrop(worker);
+
+          if (!shouldRefresh) {
+            worker.status = 'waiting';
+            if (!this.successFlag) {
+              await worker.page.waitForTimeout(this.config.buyButtonCheckInterval);
+            }
+            continue;
+          }
+
           // Wait for rate limit slot
           while (this.activeRefreshCount >= this.config.maxConcurrentRefreshes) {
             await new Promise(r => setTimeout(r, 100));
@@ -825,6 +879,8 @@ export class DropController {
           try {
             worker.status = 'refreshing';
             worker.refreshCount++;
+            worker.postDropRefreshCount++;
+            worker.buyButtonDetected = false;
             
             const jitter = Math.random() * (this.config.maxRefreshInterval - this.config.minRefreshInterval);
             const interval = this.config.minRefreshInterval + jitter;

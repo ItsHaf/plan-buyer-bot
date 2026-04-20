@@ -149,12 +149,12 @@ Plan selectors are defined in `src/types.ts` (`DEFAULT_PLAN_TIERS`). You may nee
 
 ### Time-Based (default)
 
-The recommended strategy. Combines wave-based tab launching with timed refresh spam.
+The recommended strategy. Combines wave-based tab launching with a timed post-drop refresh phase.
 
-1. Waits until `waveStartTime` (default: 03:55)
+1. Waits until `waveStartTime` (default: 09:55 Beijing time)
 2. Launches tabs in waves (4 waves x 5 tabs)
 3. Monitors for buy buttons and payment screens
-4. At `refreshSpamStart` (default: 04:00:00), switches all tabs to continuous refreshing
+4. At `refreshSpamStart` (default: 10:00:00 Beijing time), each tab gets a post-drop refresh if needed
 5. Stops when any tab reaches a payment screen
 
 ### Pre-Position
@@ -183,7 +183,9 @@ When using the default time-based strategy with waves:
 - Rate limit pages are automatically detected and refreshed
 
 **Phase 3 - Refresh Spam** (at `refreshSpamStart`)
-- All tabs switch to continuous refreshing
+- Each tab makes its own refresh decision after the drop
+- Tabs stuck on rate-limit or bad pages keep refreshing
+- Tabs that land cleanly on the target page stop refreshing automatically
 - Randomised intervals (800-2000ms) to avoid rate limiting
 - Max 5 concurrent refreshes at once
 - First tab to reach a payment screen wins
